@@ -32,7 +32,7 @@ output_path = project_path + 'output/'
 
 
 class DataList:
-    def __init__(self, zero_frac=0.1):
+    def __init__(self, zero_frac=0.1, use_side_camera=False):
         self.X_all = None
         self.y_all = None
         self.X_train = None
@@ -42,6 +42,7 @@ class DataList:
         self.X_test = None
         self.y_test = None
         self.zero_frac = zero_frac
+        self.use_side_camera = use_side_camera
         self.original_df = None
         self.augmented_df = None
         
@@ -73,8 +74,8 @@ class DataList:
         # Parse all subfolders under folder/, except IMG
         folders = []
         for entry in os.scandir(folder):
-            if entry.is_dir() and entry.path.find('.') < 0 and entry.name != 'IMG':
-                folders.append(data_path + entry.name + '/')
+            if entry.is_dir() and entry.name.find('.') < 0 and entry.name != 'IMG':
+                folders.append(folder + entry.name + '/')
         frames = [self.read_csv(folder) for folder in folders]
         df = pd.concat(frames)
         left = df['left'].apply(lambda x: x[x.find('IMG'):].replace('\\', '/'))
@@ -132,24 +133,36 @@ class DataList:
             plt.show()
             plt.close()
 
-        # Include the left and right images, and fine tune their steering angles.
-        df = self.augmented_df
-        X = np.array(df['center'].tolist())
-        left_X = np.array(df['left'].tolist())
-        right_X = np.array(df['right'].tolist())
-        y = np.array(df['steering'].tolist())
-        left_y = self.steering_transform(np.array(df['steering'].tolist()), left=True)
-        right_y = self.steering_transform(np.array(df['steering'].tolist()), left=False)
-        self.X_all = np.concatenate((X, left_X, right_X))
-        self.y_all = np.concatenate((y, left_y, right_y))
-        X_train, X_test, y_train, y_test = train_test_split(self.X_all, self.y_all, test_size=0.3)
-        X_test, X_valid, y_test, y_valid = train_test_split(X_test, y_test, test_size=0.5)
-        self.X_train, self.X_test, self.X_valid = X_train, X_test, X_valid
-        self.y_train, self.y_test, self.y_valid = y_train, y_test, y_valid
-        # print('X_all: {}, y_all: {}'.format(self.X_all.shape, self.y_all.shape))
-        # print('X_train: {}, y_train: {}'.format(self.X_train.shape, self.y_train.shape))
+        if self.use_side_camera:
+            # Include the left and right images, and fine tune their steering angles.
+            df = self.augmented_df
+            X = np.array(df['center'].tolist())
+            left_X = np.array(df['left'].tolist())
+            right_X = np.array(df['right'].tolist())
+            y = np.array(df['steering'].tolist())
+            left_y = self.steering_transform(np.array(df['steering'].tolist()), left=True)
+            right_y = self.steering_transform(np.array(df['steering'].tolist()), left=False)
+            self.X_all = np.concatenate((X, left_X, right_X))
+            self.y_all = np.concatenate((y, left_y, right_y))
+            X_train, X_test, y_train, y_test = train_test_split(self.X_all, self.y_all, test_size=0.2)
+            self.X_train, self.X_test = X_train, X_test
+            self.y_train, self.y_test = y_train, y_test
+            # X_test, X_valid, y_test, y_valid = train_test_split(X_test, y_test, test_size=0.5)
+            # self.X_train, self.X_test, self.X_valid = X_train, X_test, X_valid
+            # self.y_train, self.y_test, self.y_valid = y_train, y_test, y_valid
+        else:
+            df = self.augmented_df
+            X = np.array(df['center'].tolist())
+            y = np.array(df['steering'].tolist())
+            self.X_all = X
+            self.y_all = y
+            X_train, X_test, y_train, y_test = train_test_split(self.X_all, self.y_all, test_size=0.2)
+            self.X_train, self.X_test = X_train, X_test
+            self.y_train, self.y_test = y_train, y_test
+        print('X_all: {}, y_all: {}'.format(self.X_all.shape, self.y_all.shape))
+        print('X_train: {}, y_train: {}'.format(self.X_train.shape, self.y_train.shape))
         # print('X_valid: {}, y_valid: {}'.format(self.X_valid.shape, self.y_valid.shape))
-        # print('X_test: {}, y_test: {}'.format(self.X_test.shape, self.y_test.shape))
+        print('X_test: {}, y_test: {}'.format(self.X_test.shape, self.y_test.shape))
 
     def steering_transform(self, y, left=True):
         correction = 0.2
@@ -183,7 +196,7 @@ def generator(X, y, batch_size=32, flipped=True):
             for name, flip in zip(X_batch, flip_tag_batch):
                 # print('name: {}'.format(name))
                 # print('Read image: {}'.format(data_path + name))
-                img = mpimg.imread(data_path + name)
+                img = mpimg.imread(train_data_path + name)
                 if flip == 1:
                     img = np.fliplr(img)
                 images.append(img)
@@ -195,7 +208,7 @@ def generator(X, y, batch_size=32, flipped=True):
             # yield sklearn.utils.shuffle(X_train, y_train)
             yield X_train, y_train
 
-class PilotNet:
+class PilotNet(keras.callbacks.Callback):
     def __init__(self):
         self.model = None
         self.salient_model = None
@@ -213,7 +226,26 @@ class PilotNet:
         
         def preprocessing(images):
             import tensorflow as tf
-            return tf.map_fn(lambda img: tf.image.per_image_standardization(img), images)
+            import numpy as np
+            
+            # return tf.map_fn(lambda img: tf.image.per_image_standardization(img), images)
+            random_noise = lambda x: tf.image.random_jpeg_quality(x, 50, 100)
+    
+            shift_y = np.zeros(shape=(66, 200, 3)).astype(np.float32)
+            shift_y[:,:,0] += 0.5
+            normalized_rgb = tf.math.divide(images, 255.0)
+            # noise_img = tf.image.random_jpeg_quality(normalized_rgb, 50, 100)
+            noise_img = tf.map_fn(random_noise, normalized_rgb)
+            augmented_img_01 = tf.image.random_brightness(noise_img, max_delta=0.8)
+            augmented_img_02 = tf.image.random_contrast(augmented_img_01, lower=0.8, upper=3.0)
+            augmented_img_03 = tf.image.random_hue(augmented_img_02, max_delta=0.03)
+            augmented_img_04 = tf.image.random_saturation(augmented_img_03, lower=0, upper=4)
+            max_val = tf.math.reduce_max(augmented_img_04)
+            min_val = tf.math.reduce_min(augmented_img_04)
+            norm_augmented = tf.math.divide(tf.math.subtract(augmented_img_04, min_val), max_val - min_val)
+            yuv = tf.image.rgb_to_yuv(norm_augmented)
+            yuv_norm = tf.subtract(yuv, shift_y)
+            return yuv_norm
         
         cropping_top, cropping_down = self.cropping_top, self.cropping_down
 
@@ -307,9 +339,12 @@ class PilotNet:
     def build_salient_model(self):
         def resize_norm(images):
             import tensorflow as tf
-            resize = tf.image.resize_area(images, size=(90, 320))
-            max_val = tf.math.reduce_max(resize)
-            return tf.math.divide(resize, max_val)
+            max_val = tf.math.reduce_max(images)
+            min_val = tf.math.reduce_min(images)
+            norm = tf.math.divide(tf.math.subtract(images, min_val), max_val - min_val)
+            resize = tf.image.resize_area(norm, size=(90, 320))
+            # resize = tf.image.resize_images(norm, size=(90, 320))
+            return resize
         
         # Build salient model
         relu_5 = self.model.get_layer('relu_5').output
@@ -389,28 +424,52 @@ class PilotNet:
             generator=train_generator,
             steps_per_epoch=train_steps,
             epochs=epochs,
+            callbacks=[self],
             verbose=verbose,
             validation_data=valid_generator,
             validation_steps=valid_step)
         return history
     
+    def on_epoch_end(self, epoch, logs={}):
+        if epoch % 5 == 0 and epoch != 0:
+            print('on_epoch_end: {}'.format(epoch))
+            self.save_model(model_path + "model_{:0>3d}.h5".format(epoch), model_type='weight')
+    
     def get_salient_image(self, generator, steps):
         top = self.cropping_top
         salient_images = []
+        mask_images = []
         mask_color = [14, 252, 26]
         for i in range(steps):
             images, steers = next(generator)
             mask = self.salient_model.predict(images)
+            #for i in range(mask.shape[0]):
+            #    mask_images.append(mask[i])
+            # print('images shape: {}'.format(images.shape))
+            # print('output shape: {}'.format(mask.shape))
             mask = np.tile(mask, 3)
             mask[:,:,:,0] *= mask_color[0]
             mask[:,:,:,1] *= mask_color[1]
             mask[:,:,:,2] *= mask_color[2]
+            # print('output tile shape: {}'.format(mask.shape))
             full_mask = np.zeros_like(images)
+            # print('full_mask shape: {}'.format(full_mask.shape))
             full_mask[:,top:top+mask.shape[1],:,:] = mask
             for i in range(full_mask.shape[0]):
-                salient_img = cv2.addWeighted(images[i], 1.0, full_mask[i], 0.8, 0)
+                # input_img = (images[i] * 255.0).astype(np.uint8)
+                # mask_img = full_mask[i].astype(np.uint8)
+                input_img = images[i]
+                mask_img = full_mask[i]
+                salient_img = cv2.addWeighted(input_img, 1.0, mask_img, 0.8, 0)
+#                 if i < 5:
+#                     print('mask, min: {}, max: {}'.format(np.min(full_mask[i]), np.max(full_mask[i])))
+#                     print('images, min: {}, max: {}'.format(np.min(input_img), np.max(input_img)))
+#                     print('images[i] shape: {}'.format(images[i].shape))
+#                     print('full_mask[i] shape: {}'.format(full_mask[i].shape))
+#                     print('salient_img shape: {}'.format(salient_img.shape))
                 salient_images.append(salient_img)
-        return salient_images
+                mask_images.append(mask_img)
+        return salient_images, mask_images
     
     def save_model(self, name, model_type='entire'):
         if name.endswith('h5') == False:
@@ -490,7 +549,7 @@ def simple_generator(X, y, batch_size=1, flipped=False):
             for name, flip in zip(X_batch, flip_tag_batch):
                 # print('name: {}'.format(name))
                 # print('Read image: {}'.format(data_path + name))
-                img = mpimg.imread(data_path + name)
+                img = mpimg.imread(predict_data_path + name)
                 if flip == 1:
                     img = np.fliplr(img)
                 images.append(img)
@@ -504,32 +563,32 @@ def simple_generator(X, y, batch_size=1, flipped=False):
             
 if __name__ == '__main__':
     if len(sys.argv) == 2:
-        function = argv[1]
+        function = sys.argv[1]
     else:
         function = 'train'
     print('Run function: {}'.format(function))
     
     if function == 'train':
         # Load data csv file, zero_frac = 0.1
-        data_list = DataList(zero_frac=0.15)
+        data_list = DataList(zero_frac=0.6)
         data_list.load_data(folder=train_data_path)
         # Set generator batch size
-        batch_size = 64
+        batch_size = 128
         # compile and train the model using the generator function
         train_generator = generator(data_list.X_train, data_list.y_train, batch_size=batch_size)
         test_generator = generator(data_list.X_test, data_list.y_test, batch_size=batch_size)
-        valid_generator = generator(data_list.X_valid, data_list.y_valid, batch_size=batch_size)
+        # valid_generator = generator(data_list.X_valid, data_list.y_valid, batch_size=batch_size)
         train_step = math.ceil(data_list.X_train.shape[0] * 2 / batch_size)
         test_step = math.ceil(data_list.X_test.shape[0] * 2 / batch_size)
-        valid_step = math.ceil(data_list.X_valid.shape[0] * 2 / batch_size)
+        # valid_step = math.ceil(data_list.X_valid.shape[0] * 2 / batch_size)
         
         pilot_net = PilotNet()
         pilot_net.build_model()
         epochs = 100
         verbose = 1
-        history = pilot_net.train(train_generator, train_step, epochs, verbose, valid_generator, valid_step)
-        weight_name = model_path + 'model_weight.h5'
-        model_name = model_path + 'model.h5'
+        history = pilot_net.train(train_generator, train_step, epochs, verbose, test_generator, test_step)
+        weight_name = model_path + 'model_yuv_hard_weight.h5'
+        model_name = model_path + 'model_yuv_hard.h5'
         pilot_net.save_model(model_name, model_type='entire')
         pilot_net.save_model(weight_name, model_type='weight')
         
@@ -544,24 +603,24 @@ if __name__ == '__main__':
         plt.xlabel('epoch')
         plt.legend(['train loss', 'train mse', 'train mae',
                     'valid loss', 'valid mse', 'valid mae'], loc='upper right')
-        plt.savefig(output_path + 'history.png', bbox_inches='tight')
+        plt.savefig(output_path + 'history_yuv_hard.png', bbox_inches='tight')
         plt.close()
     elif function == 'salient':
         # Load model
-        weight_name = model_path + 'model_weight.h5'
+        weight_name = model_path + 'model_yuv_weight.h5'
         pilot_net = PilotNet()
         pilot_net.load_model(weight_name, model_type='weight')
         # Prepare data
         simple_data_list = SimpleDataList()
         simple_data_list.load_data(folder=predict_data_path)
         # Create generator
-        gif_generator = simple_generator(simple_data_list.X_train, simple_data_list.y_train)
-        gif_step = simple_data_list.X_train.shape[0]
+        gif_generator = simple_generator(simple_data_list.X, simple_data_list.y)
+        gif_step = simple_data_list.X.shape[0]
         # Prediction
         salient_output = pilot_net.get_salient_image(gif_generator, gif_step)
         # print('salient_output complete')
         # Output video file
-        gif_name = output_path + 'salient_object'
+        gif_name = output_path + 'salient_yuv_object'
         fps = 30
         clip = mpy.ImageSequenceClip(salient_output, fps=fps)
         clip.write_videofile(gif_name + ".mp4",fps=fps)
