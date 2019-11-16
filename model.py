@@ -156,9 +156,7 @@ class DataList:
             y = np.array(df['steering'].tolist())
             self.X_all = X
             self.y_all = y
-            X_train, X_test, y_train, y_test = train_test_split(self.X_all, self.y_all, test_size=0.2)
-            self.X_train, self.X_test = X_train, X_test
-            self.y_train, self.y_test = y_train, y_test
+            self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X_all, self.y_all, test_size=0.2)
         print('X_all: {}, y_all: {}'.format(self.X_all.shape, self.y_all.shape))
         print('X_train: {}, y_train: {}'.format(self.X_train.shape, self.y_train.shape))
         # print('X_valid: {}, y_valid: {}'.format(self.X_valid.shape, self.y_valid.shape))
@@ -172,7 +170,7 @@ class DataList:
             y -= correction
         return y
 
-def generator(X, y, batch_size=32, flipped=True):
+def generator(X, y, batch_size=64, flipped=True):
     # Flipping the image to create more training data
     if flipped == True:
         X_flip = np.copy(X)
@@ -226,26 +224,12 @@ class PilotNet(keras.callbacks.Callback):
         
         def preprocessing(images):
             import tensorflow as tf
-            import numpy as np
-            
-            # return tf.map_fn(lambda img: tf.image.per_image_standardization(img), images)
-            random_noise = lambda x: tf.image.random_jpeg_quality(x, 50, 100)
-    
-            shift_y = np.zeros(shape=(66, 200, 3)).astype(np.float32)
-            shift_y[:,:,0] += 0.5
+            standardization = lambda x: tf.image.per_image_standardization(x)
             normalized_rgb = tf.math.divide(images, 255.0)
-            # noise_img = tf.image.random_jpeg_quality(normalized_rgb, 50, 100)
-            noise_img = tf.map_fn(random_noise, normalized_rgb)
-            augmented_img_01 = tf.image.random_brightness(noise_img, max_delta=0.8)
-            augmented_img_02 = tf.image.random_contrast(augmented_img_01, lower=0.8, upper=3.0)
-            augmented_img_03 = tf.image.random_hue(augmented_img_02, max_delta=0.03)
-            augmented_img_04 = tf.image.random_saturation(augmented_img_03, lower=0, upper=4)
-            max_val = tf.math.reduce_max(augmented_img_04)
-            min_val = tf.math.reduce_min(augmented_img_04)
-            norm_augmented = tf.math.divide(tf.math.subtract(augmented_img_04, min_val), max_val - min_val)
-            yuv = tf.image.rgb_to_yuv(norm_augmented)
-            yuv_norm = tf.subtract(yuv, shift_y)
-            return yuv_norm
+            augmented_img_01 = tf.image.random_brightness(normalized_rgb, max_delta=0.4)
+            augmented_img_02 = tf.image.random_contrast(augmented_img_01, lower=0.5, upper=1.5)
+            std_img = tf.map_fn(standardization, augmented_img_02)
+            return std_img
         
         cropping_top, cropping_down = self.cropping_top, self.cropping_down
 
@@ -302,10 +286,11 @@ class PilotNet(keras.callbacks.Callback):
         
         # input = (1, 18, 64), output = (1152,)
         flatten = keras.layers.Flatten(name='flatten')(relu_5)
+        dropout_5 = keras.layers.Dropout(rate=0.5, name='dropout_5')(flatten)
         
         # input = (1152,), output = (100,)
         dense_6 = keras.layers.Dense(units=100,
-                                     name='dense_6')(flatten)
+                                     name='dense_6')(dropout_5)
         bn_6 = keras.layers.BatchNormalization(name='bn_6')(dense_6)
         relu_6 = keras.layers.ReLU(name='relu_6')(bn_6)
         dropout_6 = keras.layers.Dropout(rate=0.5, name='dropout_6')(relu_6)
@@ -343,7 +328,6 @@ class PilotNet(keras.callbacks.Callback):
             min_val = tf.math.reduce_min(images)
             norm = tf.math.divide(tf.math.subtract(images, min_val), max_val - min_val)
             resize = tf.image.resize_area(norm, size=(90, 320))
-            # resize = tf.image.resize_images(norm, size=(90, 320))
             return resize
         
         # Build salient model
@@ -443,30 +427,16 @@ class PilotNet(keras.callbacks.Callback):
         for i in range(steps):
             images, steers = next(generator)
             mask = self.salient_model.predict(images)
-            #for i in range(mask.shape[0]):
-            #    mask_images.append(mask[i])
-            # print('images shape: {}'.format(images.shape))
-            # print('output shape: {}'.format(mask.shape))
             mask = np.tile(mask, 3)
             mask[:,:,:,0] *= mask_color[0]
             mask[:,:,:,1] *= mask_color[1]
             mask[:,:,:,2] *= mask_color[2]
-            # print('output tile shape: {}'.format(mask.shape))
             full_mask = np.zeros_like(images)
-            # print('full_mask shape: {}'.format(full_mask.shape))
             full_mask[:,top:top+mask.shape[1],:,:] = mask
             for i in range(full_mask.shape[0]):
-                # input_img = (images[i] * 255.0).astype(np.uint8)
-                # mask_img = full_mask[i].astype(np.uint8)
                 input_img = images[i]
                 mask_img = full_mask[i]
                 salient_img = cv2.addWeighted(input_img, 1.0, mask_img, 0.8, 0)
-#                 if i < 5:
-#                     print('mask, min: {}, max: {}'.format(np.min(full_mask[i]), np.max(full_mask[i])))
-#                     print('images, min: {}, max: {}'.format(np.min(input_img), np.max(input_img)))
-#                     print('images[i] shape: {}'.format(images[i].shape))
-#                     print('full_mask[i] shape: {}'.format(full_mask[i].shape))
-#                     print('salient_img shape: {}'.format(salient_img.shape))
                 salient_images.append(salient_img)
                 mask_images.append(mask_img)
         return salient_images, mask_images
@@ -560,7 +530,7 @@ def simple_generator(X, y, batch_size=1, flipped=False):
             # TODO: Do some image augmentation here.
             # yield sklearn.utils.shuffle(X_train, y_train)
             yield X_train, y_train
-            
+
 if __name__ == '__main__':
     if len(sys.argv) == 2:
         function = sys.argv[1]
@@ -587,8 +557,8 @@ if __name__ == '__main__':
         epochs = 100
         verbose = 1
         history = pilot_net.train(train_generator, train_step, epochs, verbose, test_generator, test_step)
-        weight_name = model_path + 'model_yuv_hard_weight.h5'
-        model_name = model_path + 'model_yuv_hard.h5'
+        weight_name = model_path + 'model_weight.h5'
+        model_name = model_path + 'model.h5'
         pilot_net.save_model(model_name, model_type='entire')
         pilot_net.save_model(weight_name, model_type='weight')
         
@@ -603,11 +573,11 @@ if __name__ == '__main__':
         plt.xlabel('epoch')
         plt.legend(['train loss', 'train mse', 'train mae',
                     'valid loss', 'valid mse', 'valid mae'], loc='upper right')
-        plt.savefig(output_path + 'history_yuv_hard.png', bbox_inches='tight')
+        plt.savefig(output_path + 'history.png', bbox_inches='tight')
         plt.close()
     elif function == 'salient':
         # Load model
-        weight_name = model_path + 'model_yuv_weight.h5'
+        weight_name = model_path + 'model_weight.h5'
         pilot_net = PilotNet()
         pilot_net.load_model(weight_name, model_type='weight')
         # Prepare data
@@ -617,7 +587,7 @@ if __name__ == '__main__':
         gif_generator = simple_generator(simple_data_list.X, simple_data_list.y)
         gif_step = simple_data_list.X.shape[0]
         # Prediction
-        salient_output = pilot_net.get_salient_image(gif_generator, gif_step)
+        salient_output, mask_imgs = pilot_net.get_salient_image(gif_generator, gif_step)
         # print('salient_output complete')
         # Output video file
         gif_name = output_path + 'salient_yuv_object'

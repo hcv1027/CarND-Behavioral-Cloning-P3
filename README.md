@@ -2,32 +2,30 @@
 
 [![Udacity - Self-Driving Car NanoDegree](https://s3.amazonaws.com/udacity-sdc/github/shield-carnd.svg)](http://www.udacity.com/drive)
 
-Overview
+[//]: # (Image References)
+
+[pilot_net]: ./writeup_images/PilotNet.png "Pilot Net"
+[pilot_net_model_v1]: ./writeup_images/pilot_net_model_v1.png "Pilot Net Model Version 1"
+[pilot_net_model_v2]: ./writeup_images/pilot_net_model_v2.png "Pilot Net Model Version 2"
+[salient_net_model]: ./writeup_images/salient_net_model.png "Salient Net Model"
+[training_history]: ./writeup_images/history.png "Training history"
+[histogram_1]: ./writeup_images/histogram_1.png "Steering distribution before resample"
+[histogram_2]: ./writeup_images/histogram_2.png "Steering distribution after resample"
+[preprocess]: ./writeup_images/preprocess.png "Before and after image preprocessing"
+[visual_back_prop]: ./writeup_images/VisualBackProp.png "Block diagram of the VisualBackProp method"
+[salient_object_01]: ./writeup_images/salient_object_01.png "Salient objects found by PilotNet"
+[salient_object_02]: ./writeup_images/salient_object_02.png "Salient objects found by PilotNet"
+
+Files Submitted
 ---
-This repository contains starting files for the Behavioral Cloning Project.
-
-In this project, you will use what you've learned about deep neural networks and convolutional neural networks to clone driving behavior. You will train, validate and test a model using Keras. The model will output a steering angle to an autonomous vehicle.
-
-We have provided a simulator where you can steer a car around a track for data collection. You'll use image data and steering angles to train a neural network and then use this model to drive the car autonomously around the track.
-
-We also want you to create a detailed writeup of the project. Check out the [writeup template](https://github.com/udacity/CarND-Behavioral-Cloning-P3/blob/master/writeup_template.md) for this project and use it as a starting point for creating your own writeup. The writeup can be either a markdown file or a pdf document.
-
-To meet specifications, the project will require submitting five files: 
-* model.py (script used to create and train the model)
-* drive.py (script to drive the car - feel free to modify this file)
-* model.h5 (a trained Keras model)
-* a report writeup file (either markdown or pdf)
-* video.mp4 (a video recording of your vehicle driving autonomously around the track for at least one full lap)
-
-This README file describes how to output the video in the "Details About Files In This Directory" section.
-
-Creating a Great Writeup
----
-A great writeup should include the [rubric points](https://review.udacity.com/#!/rubrics/432/view) as well as your description of how you addressed each point.  You should include a detailed description of the code used (with line-number references and code snippets where necessary), and links to other supporting documents or external references.  You should include images in your writeup to demonstrate how your code works with examples.  
-
-All that said, please be concise!  We're not looking for you to write a book here, just a brief description of how you passed each rubric point, and references to the relevant code :). 
-
-You're not required to use markdown for your writeup.  If you use another method please just submit a pdf of your writeup.
+My project includes the following files:
+* [model.py](./model.py) containing the script to create and train the model
+* [drive.py](./drive.py) for driving the car in autonomous mode
+* [model.h5](./model/model.h5) containing a pre-trained keras model
+* [model_weight.h5](./model/model_weight.h5) containing a pre-trained keras model's weight
+* [writeup_report.md](./writeup_report.md) or writeup_report.pdf summarizing the results
+* [track_1.mp4](./track_1.mp4) a video recording when in autonomous mode on **simple track**
+* [track_2.mp4](./track_2.mp4) a video recording when in autonomous mode on **hard track**
 
 The Project
 ---
@@ -44,12 +42,10 @@ This lab requires:
 
 The lab enviroment can be created with CarND Term1 Starter Kit. Click [here](https://github.com/udacity/CarND-Term1-Starter-Kit/blob/master/README.md) for the details.
 
-The following resources can be found in this github repository:
-* drive.py
-* video.py
-* writeup_template.md
+Here is the list of tensorflow and keras version I used to train and save my model. They are different with the one listed in [CarND Term1 Starter Kit](https://github.com/udacity/CarND-Term1-Starter-Kit).
+* tensorflow (1.12.0)
+* Keras (2.2.4)
 
-The simulator can be downloaded from the classroom. In the classroom, we have also provided sample data that you can optionally use to help train your model.
 
 ## Details About Files In This Directory
 
@@ -63,7 +59,7 @@ model.save(filepath)
 Once the model has been saved, it can be used with drive.py using this command:
 
 ```sh
-python drive.py model.h5
+python drive.py model/model.h5
 ```
 
 The above command will load the trained model and use the model to make predictions on individual images in real-time and send the predicted angle back to the server via a websocket connection.
@@ -120,6 +116,134 @@ Will run the video at 48 FPS. The default FPS is 60.
 ### Tips
 - Please keep in mind that training images are loaded in BGR colorspace using cv2 while drive.py load images in RGB to predict the steering angles.
 
-## How to write a README
-A well written README file can enhance your project and portfolio.  Develop your abilities to create professional README files by completing [this free course](https://www.udacity.com/course/writing-readmes--ud777).
+Writeup report
+---
+### Referenced papers
 
+I reference these four papers to implement my model architecture.
+1. [End to End Learning for Self-Driving Cars](https://arxiv.org/abs/1604.07316)
+2. [Explaining How a Deep Neural Network Trained with End-to-End Learning Steers a Car](https://arxiv.org/abs/1704.07911)
+3. [VisualBackProp: efficient visualization of CNNs](https://arxiv.org/abs/1611.05418)
+4. [A guide to convolution arithmetic for deep learning](https://arxiv.org/abs/1603.07285)
+
+This image shows the architecture of the model which Nvidia named **PilotNet**:
+![PilotNet][pilot_net]
+
+---
+### Model Architecture and Training Strategy
+
+#### 1. Data Augmentation
+
+I use four methods to augment my training data.
+1. **Using left and right camera**: To let my model learn how to recover from the side of the road, I use the images catched from left and right cameras in my training process. I adjust the steering measurement by the value `0.2` and `-0.2` with respective to left and right images. This part is done in `model.py` from line `136` through `149`.
+   ```python
+   if self.use_side_camera:
+        # Include the left and right images, and fine tune their steering angles.
+        df = self.augmented_df
+        X = np.array(df['center'].tolist())
+        left_X = np.array(df['left'].tolist())
+        right_X = np.array(df['right'].tolist())
+        y = np.array(df['steering'].tolist())
+        left_y = self.steering_transform(np.array(df['steering'].tolist()), left=True)
+        right_y = self.steering_transform(np.array(df['steering'].tolist()), left=False)
+        self.X_all = np.concatenate((X, left_X, right_X))
+        self.y_all = np.concatenate((y, left_y, right_y))
+        X_train, X_test, y_train, y_test = train_test_split(self.X_all, self.y_all, test_size=0.2)
+        self.X_train, self.X_test = X_train, X_test
+        self.y_train, self.y_test = y_train, y_test
+   ```
+2. **Flipping images**: I flip the image horizontally, and then take the opposite sign of the steering measurement to prevent my trained model to have left turn bias. The part is done inside my `generator`
+   ```python
+   def generator(X, y, batch_size=32, flipped=True):
+        # Flipping the image to create more training data
+        if flipped == True:
+            X_flip = np.copy(X)
+            y_flip = np.copy(y) * -1
+            zero_tag = np.zeros_like(y, dtype=np.int8)
+            one_tag = np.ones_like(y, dtype=np.int8)
+            y_flip_tag = np.concatenate((zero_tag, one_tag))
+            X = np.concatenate((X, X))
+            y = np.concatenate((y, y_flip))
+        else:
+            y_flip_tag = np.zeros_like(y, dtype=np.int8)
+        data_size = X.shape[0]
+   ```
+3. **Prepare more training data**: To let my model be more generalized, I use the simulator to collect more training data. Specifically, I turn the car around and drive counter-clockwise laps around both simple and hard track. I also collect some record data when the car is driving from the side of the road back toward the center line.
+4. **Resample data**: Since the most part of record data whose steering angle are zero. In the training process, I only randomly choose 60% of data whose steering measurement are zero. It can prevent my trained model to be tend to predict zero steering angle all the time and also save the training time. This part is done in `model.py` from line `111` through `114`. Below are the histogram of steering distribution before and after I resample them.
+   
+   ![histogram_1][histogram_1]
+   ![histogram_2][histogram_2]
+5. **Image Preprocessing**: To let my model more robust, I use some image adjustment techniques to preprocess the input images. I first divide each pixel by `255.0` to rescale pixel value from `0~255` to `0~1`. Then I use `tf.image.random_brightness` and `tf.image.random_contrast` to reduce the impact of shadow and sun. Finally I use `tf.image.per_image_standardization` to standlize each input image.
+   ```python
+   def preprocessing(images):
+        import tensorflow as tf
+        standardization = lambda x: tf.image.per_image_standardization(x)
+        normalized_rgb = tf.math.divide(images, 255.0)
+        augmented_img_01 = tf.image.random_brightness(normalized_rgb, max_delta=0.4)
+        augmented_img_02 = tf.image.random_contrast(augmented_img_01, lower=0.5, upper=1.5)
+        std_img = tf.map_fn(standardization, augmented_img_02)
+        return std_img
+   ```
+   ![preprocess][preprocess]
+
+#### 2. Training stragegy
+
+![pilot_net_model_v1][pilot_net_model_v1]
+
+Above image shows my first version of model architecture. I just follow the original PilotNet model architecture introduced in the paper *"End to End Learning for Self-Driving Cars"* to implement my model. But this model doesn't work well. It always predict steerning angle as a constant value. And the record of loss values shown in the training process didn't change much. All signs tell me that this model learned nothing in the process of training. So I started to analysis what's going on. I examined the output values layer by layer, and immediatelly noticed that the output of dense_3 were always zero. But the kernel weights and bias of dense_3 were not zeros, it did't make sense. After deeper analysis, I found the problem was that the result computing `dot(input, kernel) + bias` were all negative, after passed these result into relu activation function, the outputs all became zeros. I find that the root cause is I do not normalize the output of each layer. Once the outputs of `dot(input, kernel) + bias` are negative values, they become zero after relu activation function, finally always output a constant value (In my case, it is bias of dense_3). And because the most outputs do not change, the loss doesn't change much too, so the gradient descent algorithm can't work well. I guess if I let my model train longer time, it can finally learn something, but it will be very inefficient.
+
+So I add a `batch normalization` layer between each convolution (or fully-connection layer) and activation layer. I also add a `droupout` layer with `rate = 0.5` after the activation layer of last three fully-connected layers. After this modification, my model works well to predict steering algles. Below is my final model architecture.
+
+![pilot_net_model_v2][pilot_net_model_v2]
+
+#### 3. Training history
+
+Below diagram shows the traing history output from keras. You can see that the training loss and validation loss decrease steadily. There is no overfitting or underfitting in my model.
+
+![Training history][training_history]
+
+#### 4. Finding the salient object
+
+Since I feel the part of finding the salient objects introduced in the paper *"Explaining How a Deep Neural Network Trained with End-to-End Learning Steers a Car"* is very meaningful, I decide to implement it in my project. The concept of how to visualize what PilotNet learned is shown below:
+
+![VisualBackProp][visual_back_prop]
+
+And here is my model architecture to complete this work:
+
+![SalientNet model][salient_net_model]
+
+I use the formula listed in the Keras document to compute the `output_padding`.
+```python
+new_rows = ((rows - 1) * strides[0] + kernel_size[0] - 2 * padding[0] + output_padding[0])
+new_cols = ((cols - 1) * strides[1] + kernel_size[1] - 2 * padding[1] + output_padding[1])
+```
+You can find the code about how to build SalientModel and how to blend the input image with the salient objects found by my model in the below code snipper:
+```python
+class PilotNet:
+    def build_salient_model(self):
+        ### How to build the SalientNet model
+        ...
+        return self.salient_model
+    
+    def get_salient_image(self, generator, steps):
+        ### How to blend the input image with salient object found by PilotNet
+        ...
+        return salient_images
+```
+
+Here are some sample images which mark the salient objects found by my PilotNet model, you can see that these salient objects are also meaningful for human:
+![salient_object_01][salient_object_01]
+
+![salient_object_02][salient_object_02]
+
+#### 5. Test my model through simulator
+
+Here is a full track video shows the car controlled by my model in simulator.
+
+[Track 1](./track_1.mp4)
+
+[Track 2](./track_2.mp4)
+
+### Conclusion and future work
+
+In this project, I learned how the batch normalization can help to train the deep neural network. I also get deeper understand about how the convolution and transposed convolution work. My next goal is to let my model can auto drive on the harder track in simulator more steadily (Current model only has 50% probabilisy to pass the full track). I also want to try to use `LSTM` in next version.
