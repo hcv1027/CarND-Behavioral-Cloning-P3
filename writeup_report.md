@@ -194,3 +194,6 @@ Here is a full track video shows the car controlled by my model in simulator.
 
 In this project, I learned how the batch normalization can help to train the deep neural network. I also get deeper understand about how the convolution and transposed convolution work. My next goal is to let my model can auto drive on the harder track in simulator more steadily (Current model only has 50% probabilisy to pass the full track). I also want to try to use `LSTM` in next version.
 
+### Reference
+1. [keras-salient-object-visualisation](https://github.com/ermolenkodev/keras-salient-object-visualisation)
+2. [Convolution arithmetic](https://github.com/vdumoulin/conv_arithmetic)
